@@ -40,7 +40,7 @@ BASE_DIR = os.environ.get("LANGSWAP_DATA_DIR", "data")
 
 LANGUAGES = ["english", "russian", "spanish", "french", "german", "italian",
              "portuguese", "polish", "dutch", "turkish", "arabic", "hindi",
-             "japanese", "korean", "chinese"]
+             "japanese", "korean", "chinese", "vietnamese"]
 
 # Backend choices come from langswap/backends.json (single source of truth).
 TTS_ENGINES = backends.options("tts")
@@ -442,11 +442,11 @@ def build_translate_tab() -> None:
 
             with gr.Row():
                 source_lang = gr.Dropdown(
-                    LANGUAGES, value="russian", label="Source language",
+                    LANGUAGES, value="chinese", label="Source language",
                     allow_custom_value=True,
                 )
                 target_lang = gr.Dropdown(
-                    LANGUAGES, value="english", label="Target language",
+                    LANGUAGES, value="vietnamese", label="Target language",
                     allow_custom_value=True,
                 )
 

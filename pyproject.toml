@@ -38,8 +38,13 @@ dependencies = [
 # Mac / CPU / API-only — hosted APIs (OpenAI ASR + translation, ElevenLabs TTS)
 # instead of the local-model stack. torch resolves from PyPI (CPU/MPS build).
 api = [
-    "torch",
-    "torchaudio",
+    "faster-whisper",
+    "opencv-python-headless",
+    "Pillow",
+    "mlx-audio; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-lm; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "torch==2.8.0",
+    "torchaudio==2.8.0",
     "demucs @ git+https://github.com/shigabeev/demucs@9e454051dc5ed957b13525eaad82a2e74e8e5dcb",
     "pyrubberband",
     "silero-vad",
