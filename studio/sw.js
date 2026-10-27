@@ -1,5 +1,5 @@
-const CACHE='long-studio-shell-v6';
-const SHELL=['/','/assets/style.css','/assets/app.js?v=6','/manifest.webmanifest','/assets/icon.svg'];
+const CACHE='long-studio-shell-v7';
+const SHELL=['/','/assets/style.css','/assets/app.js?v=7','/manifest.webmanifest','/assets/icon.svg'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>Promise.all(SHELL.map(async path=>cache.put(path,await fetch(path,{cache:'reload'}))))).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',event=>{

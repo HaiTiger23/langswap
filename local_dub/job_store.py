@@ -105,3 +105,31 @@ class JobStore:
     def import_result(self,job):
         with self.connect() as db:
             db.execute('INSERT OR IGNORE INTO jobs(id,fingerprint,status,created,data) VALUES(?,?,?,?,?)',(job['id'],None,'done',job['created'],json.dumps(job,ensure_ascii=False)))
+
+    def claim_expired(self,before):
+        """Reserve old terminal jobs so a retry cannot race their cleanup."""
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            rows=db.execute("SELECT data FROM jobs WHERE status IN ('done','error','cancelled','expired')").fetchall()
+            claimed=[]
+            for row in rows:
+                job=json.loads(row['data'])
+                when=job.get('finished') or job.get('created',0)
+                if when>before and job.get('status')!='expired':
+                    continue
+                if job.get('status')!='expired':
+                    job.update(status='expired',message='Đã hết hạn lưu 24 giờ; đang dọn dữ liệu trên máy.',expired_at=time.time())
+                    self._write(db,job)
+                claimed.append(job)
+            return claimed
+
+    def remove_expired(self,job_id):
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT data FROM jobs WHERE id=?',(job_id,)).fetchone()
+            if not row:
+                return False
+            if json.loads(row['data']).get('status')!='expired':
+                return False
+            db.execute('DELETE FROM jobs WHERE id=?',(job_id,))
+            return True

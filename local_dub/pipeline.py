@@ -380,7 +380,7 @@ def _run(video, reference=None, reference_text='', voice_id='', duck_db=9, steps
             for idx in too_long:(voice_dir/f'{int(idx):04d}.wav').unlink(missing_ok=True)
         write_srt(work/'vietnamese.srt',segments,'vi')
         report(.81,'6/6 — Căn thời gian từng câu, ducking nhạc nền và xuất MP4')
-        result = mix_and_mux(work,segments,total_duration,float(duck_db),log,report)
+        result = mix_and_mux(work,segments,total_duration,float(duck_db),log,report,mux_video=text_mode=='off')
         if text_mode!='off':
             from local_dub.screen_text import process
             report(.86,'6/6 — Dùng kết quả quét chữ đã chạy song song; phân loại và dựng bản xuất')
@@ -399,7 +399,7 @@ def _run(video, reference=None, reference_text='', voice_id='', duck_db=9, steps
         raise
 
 
-def mix_and_mux(work,segments,total,duck_db,log,report=lambda p,m: None):
+def mix_and_mux(work,segments,total,duck_db,log,report=lambda p,m: None,mux_video=True):
     sr=44100
     frames=round(total*sr)
     voice=np.zeros((frames,2),dtype=np.float32)
@@ -459,6 +459,7 @@ def mix_and_mux(work,segments,total,duck_db,log,report=lambda p,m: None):
     if peak > .95:
         mixed *= .95 / peak
     sf.write(work/'mixed_vi.wav', mixed, sr, subtype='PCM_16')
+    if not mux_video:return work/'mixed_vi.wav'
     result=work/'video_tieng_viet.mp4'
     command([FFMPEG,'-y','-i',work/'source.mp4','-i',work/'mixed_vi.wav','-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','aac','-b:a','192k','-t',str(total),'-movflags','+faststart',result],log)
     if abs(duration(result)-total)>.25:

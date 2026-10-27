@@ -126,7 +126,7 @@ function render(job){
  const elapsed=Math.max(0,Math.floor((job.finished||Date.now()/1000)-(job.started||job.created)));
  $('elapsed').textContent=Math.floor(elapsed/60)+'p '+String(elapsed%60).padStart(2,'0')+'s';
  if(state==='done'){showResult(job);sessionStorage.setItem('long-watch-job',job.id)}
- if(state==='error'){sessionStorage.setItem('long-watch-job',job.id);$('resultNote').textContent='Xem nhật ký để biết thêm chi tiết'}
+ if(state==='error'){sessionStorage.setItem('long-watch-job',job.id);if(job.files?.video){showResult(job);$('statusBadge').textContent='Cần kiểm tra';$('progressTitle').textContent='Đã có bản xuất · Cần kiểm tra';$('resultNote').textContent='Bản xuất gần nhất · Kiểm tra chưa đạt'}else{resetResult();$('resultNote').textContent='Xem nhật ký để biết thêm chi tiết'}}
  return running;
 }
 async function request(url,options){const r=await fetch(url,options);if(!r.ok){let msg='Không thể kết nối với ứng dụng.';try{const b=await r.json();msg=typeof b.detail==='string'?b.detail:msg}catch{}throw Error(msg)}return r.json()}
@@ -164,10 +164,10 @@ function queueRows(data){
  for(const j of jobs){
   const row=node('div','queue-row'+(j.id===currentJob?' watching':''));const name=node('div','queue-name');name.append(node('strong','',j.name));name.title=j.name;
   name.append(node('small','',new Date(j.created*1000).toLocaleString('vi-VN',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+' · #'+j.id.slice(0,7)));
-  const label={running:j.cancel_requested?'Đang dừng…':'Đang xử lý',queued:'Chờ #'+j.queue_position,done:'Hoàn tất',error:'Có lỗi',cancelled:'Đã hủy'}[j.status];
+  const label={running:j.cancel_requested?'Đang dừng…':'Đang xử lý',queued:'Chờ #'+j.queue_position,done:'Hoàn tất',error:j.files?.video?'Cần kiểm tra':'Có lỗi',cancelled:'Đã hủy'}[j.status];
   const state=node('span','queue-state '+j.status,label);const progress=node('div','queue-progress',(j.message||'').replace(/^\[.*?\] /,''));progress.title=j.message||'';
   const track=node('div');const bar=node('i');bar.style.width=Math.max(0,Math.min(100,j.progress*100))+'%';track.append(bar);progress.append(track);
-  const actions=node('div','queue-row-actions');const view=node('button','',j.status==='done'?'Xem video':'Theo dõi');view.onclick=()=>{watch(j);setView('process');queueRows(jobsSnapshot)};actions.append(view);
+  const actions=node('div','queue-row-actions');const view=node('button','',j.files?.video?'Xem video':'Theo dõi');view.onclick=()=>{watch(j);setView('process');queueRows(jobsSnapshot)};actions.append(view);
   if(j.status==='done'){const again=node('button','','Chạy lại');again.onclick=()=>jobAction(j.id,'rerun');actions.append(again);const screen=node('button','','Xử lý chữ');screen.title='Áp dụng lựa chọn Chữ Trung trên hình; dùng lại âm thanh đã lưu';screen.onclick=()=>jobAction(j.id,'screen');actions.append(screen)}
   if(['running','queued'].includes(j.status)){const cancel=node('button','danger','Hủy');cancel.disabled=!!j.cancel_requested;cancel.onclick=()=>jobAction(j.id,'cancel');actions.append(cancel)}
   if(['error','cancelled'].includes(j.status)){const retry=node('button','','Chạy lại');retry.onclick=()=>jobAction(j.id,'retry');actions.append(retry)}

@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from local_dub.screen_text import track_text,sample_box,pixel_box,text_tile
+from local_dub.screen_text import track_text,sample_box,pixel_box,text_tile,dialogue_subtitle,MAX_AGY_SCREEN_REGIONS
 
 class ScreenTextTests(unittest.TestCase):
  def test_no_chinese_does_not_create_blur_regions(self):
@@ -33,6 +33,11 @@ class ScreenTextTests(unittest.TestCase):
   tile=text_tile('Nước rửa chén',240,70)
   self.assertEqual(tile.size,(240,70))
   self.assertGreater(np.asarray(tile)[:,:,:3].max(),200)
+ def test_spoken_caption_is_classified_locally_before_asking_agy(self):
+  track=dict(text='水垢直接就分解了',start=4.0,end=5.0)
+  dialogue=[dict(start=3.8,end=5.2,zh='水垢直接就分解了')]
+  self.assertTrue(dialogue_subtitle(track,dialogue))
+  self.assertLess(MAX_AGY_SCREEN_REGIONS,100)
 
 class SavedScreenJobTests(unittest.TestCase):
  def test_screen_action_reuses_saved_audio_and_original_source(self):
@@ -54,6 +59,49 @@ class SavedScreenJobTests(unittest.TestCase):
    self.assertEqual(args['text_mode'],'subtitles')
    self.assertEqual(result['status'],'queued')
    runner.notify.assert_called_once()
+
+class ScreenPerformanceSafetyTests(unittest.TestCase):
+ def test_model_batches_are_bounded_without_dropping_any_region(self):
+  import tempfile,json
+  from pathlib import Path
+  from unittest.mock import patch
+  import local_dub.screen_text as screen
+  tracks=[dict(id=i,text='清洁油壶',start=i,end=i+1,confidence=1,samples=[dict(time=i,box=[.1,.2,.3,.1])]*3) for i in range(183)]
+  calls=[]
+  def classify(batch,segments,work,translate_subtitles):
+   calls.append(len(batch))
+   return [track|dict(kind='label',vi='Vệ sinh chai dầu') for track in batch]
+  with tempfile.TemporaryDirectory() as folder,patch.object(screen,'_classify_chunk',side_effect=classify):
+   result=screen.classify_translate(tracks,[],folder)
+   self.assertEqual([track['id'] for track in result],list(range(183)))
+   self.assertTrue(all(track['vi'] for track in result))
+   self.assertEqual(calls,[80,80,23])
+   self.assertEqual(json.loads((Path(folder)/'classification_stats.json').read_text())['completed_batches'],3)
+ def test_frame_stream_handles_arbitrary_read_boundaries_and_truncation(self):
+  from local_dub.screen_text import jpeg_frames
+  class Chunks:
+   def __init__(self,chunks):self.chunks=iter(chunks)
+   def read(self,_):return next(self.chunks,b'')
+  self.assertEqual(list(jpeg_frames(Chunks([b'\xff',b'\xd8abc\xff',b'\xd9\xff\xd8def\xff\xd9']))),[b'\xff\xd8abc\xff\xd9',b'\xff\xd8def\xff\xd9'])
+  with self.assertRaisesRegex(RuntimeError,'giữa frame'):
+   list(jpeg_frames(Chunks([b'\xff\xd8abc'])))
+ def test_timeline_matches_full_scan_and_keeps_paint_order(self):
+  from local_dub.screen_text import RegionTimeline
+  regions=[dict(start=2,end=4,id=0),dict(start=0,end=3,id=1),dict(start=1,end=2,id=2)]
+  timeline=RegionTimeline(regions)
+  for t in (0,.5,1,1.99,2,3,4,10):
+   self.assertEqual(timeline.at(t),[r for r in regions if r['start']<=t<r['end']])
+ def test_binary_sample_lookup_preserves_original_union(self):
+  samples=[dict(time=round(i/30,3),box=[.1+(i%3)*.01,.2,.3,.1]) for i in range(180)]
+  track=dict(samples=samples)
+  for t in np.arange(-.2,6.2,.017):
+   nearest=min(samples,key=lambda s:abs(s['time']-t))
+   if abs(nearest['time']-t)>1/30+.065:
+    self.assertIsNone(sample_box(track,t));continue
+   boxes=[s['box'] for s in samples if abs(s['time']-nearest['time'])<=1/30+.01]
+   x=min(b[0] for b in boxes);y=min(b[1] for b in boxes)
+   expected=[x,y,max(b[0]+b[2] for b in boxes)-x,max(b[1]+b[3] for b in boxes)-y]
+   np.testing.assert_allclose(sample_box(track,t),expected)
 
 class ScreenQualityGateTests(unittest.TestCase):
  def test_residual_chinese_is_masked_and_rechecked(self):

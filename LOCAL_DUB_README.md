@@ -62,6 +62,10 @@ App dùng `.venv` của Langswap, có thêm `mlx-audio` cho Qwen3-ASR và agy CL
 
 ## Kiểm thử
 
+OCR xử lý luồng JPEG theo lô 24 frame, chỉ giữ một lô ảnh tạm trên ổ đĩa. Mỗi lô nhận diện hoàn tất được lưu JSON trong `screen_text/ocr_batches_v3/`: khi tiếp tục sau lỗi, hệ thống giải mã lại video nhưng dùng lại các lô OCR đã xong. Lượt khác cùng video có thể dùng lại kết quả nhận diện gốc; kiểm tra video thành phẩm vẫn quét riêng ở 30 frame/giây. Khi bật xử lý chữ, âm thanh được trộn trước rồi ghép cùng bản hình cuối, bỏ MP4 trung gian.
+
+Vùng OCR nhiễu và phụ đề khớp lời thoại được lọc trên máy. Những vùng còn lại được gửi agy theo lô tối đa 80, mỗi lô có toàn bộ lời thoại làm ngữ cảnh và cache riêng; các vùng vượt 80 được chia sang lô tiếp theo, không bỏ bản dịch.
+
 Khi kiểm thử thực tế, dùng clip khoảng 10–15 giây theo yêu cầu người dùng; không chạy lại toàn bộ video dài nếu chưa được yêu cầu.
 
 ```sh

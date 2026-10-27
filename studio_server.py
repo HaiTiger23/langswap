@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import time
 import uuid
+import asyncio
+from contextlib import suppress
 from pathlib import Path
 from typing import Optional
 
@@ -18,7 +20,7 @@ import hashlib
 import shutil
 from contextlib import asynccontextmanager
 from local_dub.job_store import JobStore
-from local_dub.queue_runner import QueueRunner
+from local_dub.queue_runner import QueueRunner,recover_failed_result
 from local_dub.pipeline import digest
 from local_dub.timing_policy import PIPELINE_VERSION
 
@@ -30,6 +32,9 @@ VOICES=ROOT/'data/studio_voices'
 VOICES.mkdir(parents=True,exist_ok=True)
 VOICE_INDEX=VOICES/'index.json'
 KINDS={'video','audio','srt','log','segments','source'}
+RETENTION_SECONDS=24*60*60
+RESULTS=ROOT/'data/studio_results'
+CACHE_ROOT=ROOT/'data/local_dub'
 
 
 def import_results():
@@ -49,6 +54,55 @@ def import_results():
         STORE.import_result(dict(id='saved-'+manifest.parent.name,name='Video đã lưu · '+manifest.parent.name[:6],status='done',progress=1,message='Video đã lưu từ phiên trước.',history=[],result=result,created=manifest.stat().st_mtime,finished=manifest.stat().st_mtime))
 
 
+def inside(path,root):
+    """Accept only a direct child of an owned storage root, never the root itself."""
+    try:
+        target=Path(path).resolve(strict=False);base=Path(root).resolve()
+        return target.parent==base and target!=base
+    except (OSError,TypeError):
+        return False
+
+
+def remove_owned_tree(path,root):
+    if not path or not inside(path,root):
+        return True
+    target=Path(path)
+    if not target.exists():
+        return True
+    if not target.is_dir():
+        return False
+    shutil.rmtree(target)
+    return not target.exists()
+
+
+def cleanup_expired_jobs(now=None):
+    """Erase terminal job artefacts after 24h without touching active work or voices."""
+    cutoff=(time.time() if now is None else now)-RETENTION_SECONDS
+    expired=STORE.claim_expired(cutoff)
+    # A cache can be reused by a still-visible task. Keep it until its last owner expires.
+    retained={str(Path((job.get('result') or {}).get('cache_directory','')).resolve()) for job in STORE.list() if job.get('status')!='expired' and (job.get('result') or {}).get('cache_directory')}
+    for job in expired:
+        args=job.get('args') or {};result=job.get('result') or {}
+        upload=Path(args['video']).parent if args.get('video') else None
+        output=result.get('directory')
+        cache=result.get('cache_directory')
+        ok=remove_owned_tree(upload,UPLOADS) and remove_owned_tree(output,RESULTS)
+        if cache and str(Path(cache).resolve()) not in retained:
+            ok=remove_owned_tree(cache,CACHE_ROOT) and ok
+        if ok:
+            STORE.remove_expired(job['id'])
+
+
+async def retention_loop():
+    while True:
+        await asyncio.sleep(15*60)
+        cleanup_expired_jobs()
+        for job in STORE.list():
+            if job['status']=='error' and not (job.get('result') or {}).get('video'):
+                preview=recover_failed_result(job,CACHE_ROOT,RESULTS)
+                if preview:STORE.patch(job['id'],result=preview,needs_review=True)
+
+
 @asynccontextmanager
 async def lifespan(app):
     global RUNNER
@@ -59,8 +113,15 @@ async def lifespan(app):
         lease.close();raise RuntimeError('Studio đang mở ở cửa sổ khác. Truy cập http://127.0.0.1:7860/')
     try:
         import_results()
+        cleanup_expired_jobs()
         RUNNER=QueueRunner(STORE,run,ROOT/'data/studio_results');RUNNER.start()
-        yield
+        cleaner=asyncio.create_task(retention_loop())
+        try:
+            yield
+        finally:
+            cleaner.cancel()
+            with suppress(asyncio.CancelledError):
+                await cleaner
     finally:
         if RUNNER:RUNNER.stop()
         fcntl.flock(lease,fcntl.LOCK_UN);lease.close()

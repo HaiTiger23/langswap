@@ -54,6 +54,26 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(self.store.get(job['id'])['status'],'queued')
         self.assertEqual(self.store.get(job['id'])['progress'],.52)
 
+    def test_expired_terminal_job_is_reserved_before_its_files_are_removed(self):
+        job,_=self.store.enqueue('old video',{},'old')
+        then=time.time()-24*60*60-1
+        self.store.patch(job['id'],status='done',finished=then)
+        expired=self.store.claim_expired(time.time()-24*60*60)
+        self.assertEqual([item['id'] for item in expired],[job['id']])
+        self.assertEqual(self.store.get(job['id'])['status'],'expired')
+        # A UI retry cannot revive a job after cleanup has claimed its artefacts.
+        self.assertEqual(self.store.retry(job['id'])['status'],'expired')
+        self.assertTrue(self.store.remove_expired(job['id']))
+        self.assertIsNone(self.store.get(job['id']))
+
+    def test_cleanup_never_claims_a_queued_or_running_job(self):
+        queued,_=self.store.enqueue('queued',{},'queued')
+        running,_=self.store.enqueue('running',{},'running')
+        self.store.claim()
+        self.assertEqual(self.store.get(queued['id'])['status'],'running')
+        self.assertEqual(self.store.get(running['id'])['status'],'queued')
+        self.assertEqual(self.store.claim_expired(time.time()+1),[])
+
 
 class ProcessCancellationTests(unittest.TestCase):
     def test_cancelling_stops_a_model_process_even_without_stdout(self):
@@ -75,5 +95,28 @@ class ProcessCancellationTests(unittest.TestCase):
             pid=int(pidfile.read_text());event.set();thread.join(timeout=3)
             self.assertFalse(thread.is_alive());self.assertEqual(errors,['cancelled'])
             with self.assertRaises(ProcessLookupError):os.kill(pid,0)
+
+class FailedPreviewTests(unittest.TestCase):
+    def test_quality_failure_keeps_downloadable_preview_and_error(self):
+        import json
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);cache=root/'local_dub/cache';screen=cache/'screen_text';screen.mkdir(parents=True)
+            store=JobStore(root/'queue.db')
+            job,_=store.enqueue('preview',dict(video=str(root/'source.mp4')),'x')
+            (cache/'settings.json').write_text(json.dumps(dict(generation_id=job['id'])))
+            video=screen/'checked.mp4';video.write_bytes(b'complete encoded video')
+            (screen/'preview.json').write_text(json.dumps(dict(directory=str(cache),video=str(video),needs_review=True)))
+            def fail(**kwargs):raise RuntimeError('OCR quality failed')
+            runner=QueueRunner(store,fail,root/'studio_results');runner.start()
+            try:
+                for _ in range(100):
+                    current=store.get(job['id'])
+                    if current['status']=='error':break
+                    time.sleep(.01)
+                self.assertEqual(current['status'],'error')
+                self.assertEqual(current['message'],'OCR quality failed')
+                self.assertTrue(current['needs_review'])
+                self.assertEqual(Path(current['result']['video']).read_bytes(),video.read_bytes())
+            finally:runner.stop()
 
 if __name__=='__main__':unittest.main()
